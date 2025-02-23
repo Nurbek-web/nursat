@@ -8,8 +8,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Clock } from "lucide-react";
-import { Question, QuestionType } from "@/types";
+import { Clock, Loader2, Search, Shuffle } from "lucide-react";
+import { Question, QuestionType, Etymology } from "@/types";
 import {
   getFirestore,
   addDoc,
@@ -24,6 +24,10 @@ import { getAuth } from "firebase/auth";
 import TestGenerator from "@/components/test-generator";
 import TestList from "@/components/test-list";
 import { useAuth } from "@/hooks/useAuth";
+import EtymologyBreakdown from "@/components/etymology-breakdown";
+import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import EtymologyTree from "@/components/ethymology-tree"; // Import the new component
 
 interface PracticeSession {
   totalQuestions: number;
@@ -31,6 +35,7 @@ interface PracticeSession {
   questionType: QuestionType;
   duration: number;
   mode: "finite" | "infinite";
+  completed?: boolean;
 }
 
 interface RawQuestion {
@@ -70,14 +75,128 @@ export default function PracticePage() {
     questionType: (searchParams.get("type") as QuestionType) || "reading",
     duration: 0,
     mode: (searchParams.get("mode") as "finite" | "infinite") || "finite",
+    completed: false,
   });
   const [questionsQueue, setQuestionsQueue] = useState<Question[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const totalQuestionsToGenerate = sessionData.mode === "finite" ? 5 : 2;
   const testId = searchParams.get("testId");
+  const [word, setWord] = useState("");
+  const [etymology, setEtymology] = useState<Etymology | null>(null);
 
   const questionType = (searchParams.get("type") as QuestionType) || "reading";
 
+  // Add this useEffect to handle initial load state
+  useEffect(() => {
+    setLoading(false); // Immediately set loading to false for vocabulary mode
+  }, []);
+
+  // For vocabulary mode, we don't need test authentication
+  if (questionType === "vocabulary") {
+    const handleWordSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!word.trim()) {
+        toast({
+          title: "Please enter a word",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const response = await fetch(
+          "/api/etymology?word=" + encodeURIComponent(word)
+        );
+        const data = await response.json();
+        setEtymology({
+          ...data,
+          origins: data.origins || [],
+        });
+      } catch (error) {
+        console.error("Error fetching etymology:", error);
+        toast({
+          title: "Error",
+          description: "Failed to get word etymology",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const getRandomWord = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch("/api/random-word");
+        const data = await response.json();
+        setWord(data.word);
+        setEtymology({
+          ...data,
+          origins: data.origins || [],
+        });
+      } catch (error) {
+        console.error("Error fetching random word:", error);
+        toast({
+          title: "Error",
+          description: "Failed to get random word",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    return (
+      <div className="container mx-auto p-6">
+        <Card className="max-w-3xl mx-auto">
+          <CardContent className="p-6">
+            <div className="mb-8">
+              <h2 className="text-2xl font-serif font-semibold mb-2">
+                Word Etymology Tool
+              </h2>
+              <p className="text-gray-600">
+                Enter any word to see its etymology breakdown, or get a random
+                SAT vocabulary word.
+              </p>
+            </div>
+            <form onSubmit={handleWordSubmit} className="space-y-4">
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Input
+                    type="text"
+                    placeholder="Enter a word..."
+                    value={word}
+                    onChange={(e) => setWord(e.target.value)}
+                    className="w-full"
+                  />
+                </div>
+                <Button type="submit" disabled={loading}>
+                  <Search className="h-4 w-4 mr-2" />
+                  Analyze
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={getRandomWord}
+                  disabled={loading}
+                >
+                  <Shuffle className="h-4 w-4 mr-2" />
+                  Random SAT Word
+                </Button>
+              </div>
+            </form>
+            {loading && (
+              <div className="flex justify-center my-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
+            )}
+            {etymology && <EtymologyTree etymology={etymology} />}{" "}
+            {/* Use the new component */}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
   useEffect(() => {
     // Don't redirect while auth is loading
     if (authLoading) return;
@@ -88,8 +207,14 @@ export default function PracticePage() {
       return;
     }
 
+    // Redirect to dashboard if no testId is provided
     if (!testId) {
-      initializeSession();
+      router.push("/dashboard");
+      toast({
+        title: "Access Denied",
+        description: "Please select a test from your dashboard to practice",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -115,20 +240,10 @@ export default function PracticePage() {
             return;
           }
 
-          // Parse the questions from the stringified JSON format
-          const parsedQuestions = testData.questions
-            .map((q) => {
-              try {
-                // Each question is an object with a "0" property containing the stringified question
-                return JSON.parse(q["0"]) as Question;
-              } catch (error) {
-                console.error("Error parsing question:", error);
-                return null;
-              }
-            })
-            .filter((q): q is Question => q !== null);
+          // Use the questions directly, since they are stored as objects
+          const parsedQuestions = testData.questions.filter((q) => q !== null);
 
-          if (parsedQuestions.length === 0) {
+          if (!parsedQuestions.length) {
             console.error("No valid questions found in test data");
             toast({
               title: "Error",
@@ -139,24 +254,43 @@ export default function PracticePage() {
             return;
           }
 
-          const currentQuestion = parsedQuestions[currentQuestionIndex];
-          if (!currentQuestion) {
-            console.error("Invalid question index:", currentQuestionIndex);
-            setCurrentQuestionIndex(0);
-            setQuestion(parsedQuestions[0]);
-          } else {
-            setQuestion(currentQuestion);
+          // Validate each question has required fields
+          const validQuestions = parsedQuestions.filter((q) => {
+            const isValid =
+              q &&
+              typeof q === "object" &&
+              "question" in q &&
+              Array.isArray(q.options) &&
+              q.options.length === 4 &&
+              "correctAnswer" in q &&
+              "explanation" in q;
+
+            if (!isValid) {
+              console.error("Invalid question format:", q);
+            }
+
+            return isValid;
+          });
+
+          if (!validQuestions.length) {
+            console.error("No valid questions found after validation");
+            toast({
+              title: "Error",
+              description: "Failed to load valid test questions",
+              variant: "destructive",
+            });
+            setLoading(false);
+            return;
           }
 
-          setSessionData({
-            totalQuestions: testData.config.numberOfQuestions,
-            correctAnswers: testData.progress.correctAnswers,
-            questionType: testData.config.questionType,
-            duration: 0,
-            mode: "finite",
-          });
-          setQuestionsQueue(parsedQuestions);
-          resetQuestionState();
+          // Set the questions and other state as needed
+          setQuestionsQueue(validQuestions);
+          setSessionData((prev) => ({
+            ...prev,
+            totalQuestions: validQuestions.length,
+          }));
+          setQuestion(validQuestions[currentQuestionIndex]);
+          setLoading(false);
         } else {
           console.error("Test document does not exist");
           toast({
@@ -164,22 +298,25 @@ export default function PracticePage() {
             description: "Test not found",
             variant: "destructive",
           });
+          setLoading(false);
         }
-        setLoading(false);
       },
-      (error: Error) => {
-        console.error("Error loading test:", error);
+      (error) => {
+        console.error("Error fetching test data:", error);
         toast({
           title: "Error",
-          description: "Failed to load test",
+          description: "Failed to load test data",
           variant: "destructive",
         });
         setLoading(false);
       }
     );
 
-    return () => unsubscribe();
-  }, [testId, currentQuestionIndex, user, router, authLoading]);
+    // Clean up the listener on unmount
+    return () => {
+      unsubscribe();
+    };
+  }, [user, authLoading]);
 
   useEffect(() => {
     if (timeLeft === 0 || showExplanation) return;
@@ -198,37 +335,6 @@ export default function PracticePage() {
     const results = await Promise.all(questionPromises);
     // Flatten the results since generateQuestion returns an array
     return results.flat();
-  };
-
-  const initializeSession = async () => {
-    setLoading(true);
-    try {
-      // Generate initial batch of questions in parallel
-      const questions = await generateMultipleQuestions(
-        totalQuestionsToGenerate
-      );
-      setQuestionsQueue(questions);
-      setQuestion(questions[0]);
-      resetQuestionState();
-
-      // For infinite mode, start generating next batch in background
-      if (sessionData.mode === "infinite") {
-        generateMultipleQuestions(2).then((newQuestions) => {
-          setQuestionsQueue((prevQuestions) => [
-            ...prevQuestions,
-            ...newQuestions,
-          ]);
-        });
-      }
-    } catch (error) {
-      console.error("Error initializing session:", error);
-      toast({
-        title: "Error",
-        description: "Failed to initialize practice session",
-        variant: "destructive",
-      });
-    }
-    setLoading(false);
   };
 
   const resetQuestionState = () => {
@@ -268,7 +374,7 @@ export default function PracticePage() {
       nextIndex >= totalQuestionsToGenerate
     ) {
       await savePracticeSession(sessionData);
-      // Show completion screen or redirect
+      setSessionData((prev) => ({ ...prev, completed: true }));
       return;
     }
 
@@ -341,16 +447,101 @@ export default function PracticePage() {
     return null; // Will redirect in useEffect
   }
 
-  // If no test is active, show the test generator and list
-  if (!testId && !question) {
+  // If no test is active, redirect to dashboard
+  if (!testId) {
+    return null; // Will redirect in useEffect
+  }
+
+  // Show practice overview when completed
+  if (sessionData.completed) {
     return (
       <div className="container mx-auto p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <TestGenerator />
-          <TestList />
-        </div>
+        <Card className="max-w-3xl mx-auto">
+          <CardContent className="p-6">
+            <div className="text-center mb-8">
+              <h2 className="text-2xl font-bold mb-2">Practice Complete!</h2>
+              <p className="text-gray-600">Here's how you did</p>
+            </div>
+
+            <div className="grid gap-6 mb-8">
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="text-center p-4 bg-blue-50 rounded-lg">
+                    <h3 className="text-lg font-medium text-gray-600">Score</h3>
+                    <p className="text-3xl font-bold text-blue-600">
+                      {Math.round(
+                        (sessionData.correctAnswers /
+                          sessionData.totalQuestions) *
+                          100
+                      )}
+                      %
+                    </p>
+                  </div>
+                  <div className="text-center p-4 bg-green-50 rounded-lg">
+                    <h3 className="text-lg font-medium text-gray-600">
+                      Correct Answers
+                    </h3>
+                    <p className="text-3xl font-bold text-green-600">
+                      {sessionData.correctAnswers}/{sessionData.totalQuestions}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <h3 className="text-lg font-medium mb-4">Session Details</h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Question Type</span>
+                    <span className="font-medium">
+                      {sessionData.questionType}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Time Spent</span>
+                    <span className="font-medium">
+                      {Math.round(sessionData.duration / 60)} minutes
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">
+                      Average Time per Question
+                    </span>
+                    <span className="font-medium">
+                      {Math.round(
+                        sessionData.duration / sessionData.totalQuestions
+                      )}{" "}
+                      seconds
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <Button
+                onClick={() => router.push("/practice")}
+                className="flex-1"
+              >
+                Practice Again
+              </Button>
+              <Button
+                onClick={() => router.push("/dashboard")}
+                variant="outline"
+                className="flex-1"
+              >
+                Back to Dashboard
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
+  }
+
+  // Only render vocabulary tool if type is vocabulary
+  if (questionType !== "vocabulary") {
+    return null; // Let other question types be handled by existing code
   }
 
   return (
@@ -396,83 +587,63 @@ export default function PracticePage() {
                     return (
                       <div
                         key={index}
-                        className="flex items-center justify-between group relative"
+                        className={cn(
+                          "flex items-center space-x-2 p-4 rounded-lg border transition-colors",
+                          {
+                            "opacity-50": isExcluded,
+                            "bg-white": !isExcluded,
+                            "border-blue-500 bg-blue-50":
+                              selectedAnswer === option && !showExplanation,
+                            "border-green-500 bg-green-50":
+                              option === question.correctAnswer &&
+                              showExplanation,
+                            "border-red-500 bg-red-50":
+                              selectedAnswer === option &&
+                              option !== question.correctAnswer &&
+                              showExplanation,
+                          }
+                        )}
                       >
-                        <div className="flex items-center space-x-2 flex-1">
-                          <RadioGroupItem
-                            value={option}
-                            id={`option-${index}`}
-                            className="h-5 w-5 border-2 text-blue-600"
-                            disabled={isExcluded}
-                          />
-                          <Label
-                            htmlFor={`option-${index}`}
-                            className={`text-base font-normal ${
-                              isExcluded ? "opacity-50 line-through" : ""
-                            }`}
-                          >
-                            {option}
-                          </Label>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            if (isExcluded) {
-                              setExcludedOptions(
-                                excludedOptions.filter((opt) => opt !== option)
-                              );
-                            } else {
-                              setExcludedOptions([...excludedOptions, option]);
-                            }
-                          }}
-                          className={`text-gray-400 hover:text-gray-600 ${
-                            isExcluded
-                              ? "opacity-100"
-                              : "opacity-0 group-hover:opacity-100"
-                          }`}
+                        <RadioGroupItem value={option} id={`option-${index}`} />
+                        <Label
+                          htmlFor={`option-${index}`}
+                          className="flex-grow cursor-pointer"
                         >
-                          {isExcluded ? "↺" : "×"}
-                        </Button>
+                          {option}
+                        </Label>
                       </div>
                     );
                   })}
                 </RadioGroup>
               </div>
 
+              {/* Show etymology breakdown for vocabulary questions */}
+              {questionType === "vocabulary" &&
+                question.etymology &&
+                !showExplanation && (
+                  <EtymologyBreakdown etymology={question.etymology} />
+                )}
+
+              {showExplanation && (
+                <div className="mt-6 p-4 rounded-lg bg-blue-50">
+                  <h3 className="font-medium text-blue-900 mb-2">
+                    Explanation
+                  </h3>
+                  <p className="text-blue-800">{question.explanation}</p>
+
+                  {/* Show etymology after answering for vocabulary questions */}
+                  {questionType === "vocabulary" && question.etymology && (
+                    <EtymologyBreakdown etymology={question.etymology} />
+                  )}
+                </div>
+              )}
+
               {!showExplanation ? (
-                <Button onClick={handleSubmit} className="w-full">
+                <Button onClick={handleSubmit} className="w-full mt-6">
                   Submit Answer
                 </Button>
               ) : (
                 <>
-                  <div className="mb-6 space-y-4">
-                    <div
-                      className={`p-4 rounded-md ${
-                        selectedAnswer === question.correctAnswer
-                          ? "bg-green-50 border border-green-200"
-                          : "bg-red-50 border border-red-200"
-                      }`}
-                    >
-                      <h3
-                        className={`font-medium mb-2 ${
-                          selectedAnswer === question.correctAnswer
-                            ? "text-green-800"
-                            : "text-red-800"
-                        }`}
-                      >
-                        {selectedAnswer === question.correctAnswer
-                          ? "Correct!"
-                          : "Incorrect"}
-                      </h3>
-                      <p className="text-gray-700">{question.explanation}</p>
-                      {selectedAnswer !== question.correctAnswer && (
-                        <p className="mt-2 font-medium text-gray-900">
-                          Correct answer: {question.correctAnswer}
-                        </p>
-                      )}
-                    </div>
-                  </div>
                   <div className="mb-4 p-4 rounded-md bg-gray-100">
                     <p>
                       Progress: {sessionData.correctAnswers}/
@@ -495,6 +666,51 @@ export default function PracticePage() {
               )}
             </>
           )}
+
+          <div className="mt-8">
+            <h2 className="text-2xl font-serif font-semibold mb-2">
+              Word Etymology Tool
+            </h2>
+            <p className="text-gray-600">
+              Enter any word to see its etymology breakdown, or get a random SAT
+              vocabulary word.
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Input
+                  type="text"
+                  placeholder="Enter a word..."
+                  value={word}
+                  onChange={(e) => setWord(e.target.value)}
+                  className="w-full"
+                />
+              </div>
+              <Button type="submit" disabled={loading}>
+                <Search className="h-4 w-4 mr-2" />
+                Analyze
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={getRandomWord}
+                disabled={loading}
+              >
+                <Shuffle className="h-4 w-4 mr-2" />
+                Random SAT Word
+              </Button>
+            </div>
+          </form>
+
+          {loading && (
+            <div className="flex justify-center my-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+          )}
+
+          {etymology && <EtymologyBreakdown etymology={etymology} />}
         </CardContent>
       </Card>
     </div>

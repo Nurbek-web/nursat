@@ -45,6 +45,7 @@ interface UserProgress {
   reading: number;
   writing: number;
   math: number;
+  vocabulary?: number;
 }
 
 export default function Dashboard() {
@@ -258,7 +259,7 @@ export default function Dashboard() {
         {/* Add more cards for different sections */}
       </div>
 
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-6">
         <Button
           onClick={() => router.push("/practice?type=reading")}
           className="w-full"
@@ -277,10 +278,16 @@ export default function Dashboard() {
         >
           Practice Math
         </Button>
+        <Button
+          onClick={() => router.push("/practice?type=vocabulary")}
+          className="w-full bg-emerald-600 hover:bg-emerald-700"
+        >
+          Practice Vocabulary
+        </Button>
       </div>
 
       {/* Progress Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-8">
         <Card>
           <CardHeader>
             <CardTitle>Reading Progress</CardTitle>
@@ -303,6 +310,14 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <Progress value={progress.math} />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Vocabulary Progress</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Progress value={progress.vocabulary || 0} />
           </CardContent>
         </Card>
       </div>

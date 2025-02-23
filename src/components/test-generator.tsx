@@ -85,10 +85,21 @@ export default function TestGenerator() {
 
       const questions = await Promise.all(questionPromises);
 
+      // Format questions for Firestore storage
+      // Format questions for Firestore storage
+      const formattedQuestions = questions.flat().map((question: Question) => ({
+        question: question.question,
+        options: question.options,
+        correctAnswer: question.correctAnswer,
+        explanation: question.explanation,
+        userAnswer: null,
+        isCorrect: null,
+      }));
+
       // Update the test document with questions and ready status
       await updateDoc(testRef, {
         status: "ready",
-        questions,
+        questions: formattedQuestions,
       });
 
       // Reset form
@@ -142,7 +153,6 @@ export default function TestGenerator() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="reading">Reading</SelectItem>
-                <SelectItem value="listening">Listening</SelectItem>
                 <SelectItem value="writing">Writing</SelectItem>
               </SelectContent>
             </Select>

@@ -1,141 +1,146 @@
 import OpenAI from "openai";
-import { Question, QuestionType } from "@/types";
+import { Question, QuestionType, Etymology } from "@/types";
 
 const openai = new OpenAI({
   apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true,
+  dangerouslyAllowBrowser: true, // Required for client-side usage
 });
 
-interface Question {
-  question: string;
-  options: string[];
-  correctAnswer: string;
-  explanation: string;
-}
-
-export async function generateQuestion(
-  type: QuestionType,
-  difficulty: "easy" | "medium" | "hard"
-): Promise<Question[]> {
-  try {
-    const prompt = generatePromptForQuestionType(type, difficulty);
-
-    const response = await fetch("/api/generate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+const sampleVocabularyWords = [
+  {
+    word: "deconstruct",
+    definition: "To break down into constituent parts; to analyze critically",
+    roots: [
+      {
+        root: "de-",
+        origin: "Latin",
+        meaning: "down, off, away",
       },
-      body: JSON.stringify({ prompt }),
+      {
+        root: "construct",
+        origin: "Latin",
+        meaning: "to build, to pile up",
+      },
+    ],
+    usage:
+      "The literary critic deconstructed the novel to reveal its underlying themes.",
+  },
+  {
+    word: "benevolent",
+    definition: "Kind, generous, and caring about others",
+    roots: [
+      {
+        root: "bene-",
+        origin: "Latin",
+        meaning: "good, well",
+      },
+      {
+        root: "vol",
+        origin: "Latin",
+        meaning: "to wish",
+      },
+    ],
+    usage:
+      "The benevolent donor provided funds for the new children's hospital.",
+  },
+  // Add more sample words as needed
+];
+
+export async function generateQuestion(type: QuestionType): Promise<Question> {
+  if (type === "vocabulary") {
+    // For now, randomly select a word from our sample list
+    const wordData =
+      sampleVocabularyWords[
+        Math.floor(Math.random() * sampleVocabularyWords.length)
+      ];
+
+    // Generate wrong options that are semantically related but incorrect
+    const wrongOptions = [
+      "opposite meaning",
+      "similar but incorrect",
+      "related but wrong",
+    ];
+
+    return {
+      question: `What is the meaning of the word "${wordData.word}"?`,
+      options: [wordData.definition, ...wrongOptions],
+      correctAnswer: wordData.definition,
+      explanation: `The word "${wordData.word}" comes from ${wordData.roots
+        .map((r) => r.root)
+        .join(" + ")}. ${wordData.usage}`,
+      etymology: {
+        word: wordData.word,
+        roots: wordData.roots,
+        definition: wordData.definition,
+        usage: wordData.usage,
+      },
+    };
+  }
+
+  // For other question types, use OpenAI to generate questions
+  try {
+    const prompt = getPromptForQuestionType(type);
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a helpful AI tutor creating SAT practice questions.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 0.7,
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || "Failed to generate questions");
+    const response = completion.choices[0]?.message?.content;
+    if (!response) {
+      throw new Error("No response from OpenAI");
     }
 
-    const data = await response.json();
-    return data.questions;
+    // Parse the response into a Question object
+    const parsedQuestion = JSON.parse(response) as Question;
+    return parsedQuestion;
   } catch (error) {
-    console.error("Error generating questions:", error);
+    console.error("Error generating question:", error);
     throw error;
   }
 }
 
-function generatePromptForQuestionType(
-  type: QuestionType,
-  difficulty: string
-): string {
-  const prompts = {
-    reading: `
-      Generate a DSAT-style Reading question at ${difficulty} difficulty level.
-      
-      Choose ONE of these question types randomly:
-      1. Specific Detail: Ask about locating and identifying specific information from the passage
-      2. Main Idea: Ask about the central theme or main point of the passage
-      3. Purpose: Ask about the author's primary purpose or intent
-      4. Function: Ask about the function of a specific phrase or section
-      5. Claims: Ask about evidence supporting or weakening claims in the passage
-      6. Data Interpretation: Include a small data point and ask how it relates to the passage
-      7. Complete The Text: Ask about logical completion of a thought or argument
-      8. Cross Text: Provide two short related passages and ask about their relationship
-      9. Structure: Ask about the organizational pattern or structure of the passage
-
-      Follow these steps:
-      1. Write a concise passage (80-120 words) appropriate for DSAT Reading.
-         - For Cross Text questions, write two related short passages (50-60 words each)
-         - For Data questions, include a simple data point or statistic
-      2. Formulate ONE question based on the randomly chosen question type above.
-         Use these example stems based on the question type:
-         - Specific Detail: "According to the passage, what..."
-         - Main Idea: "The main purpose of this passage is to..."
-         - Purpose: "The author primarily intends to..."
-         - Function: "The phrase [quote] primarily serves to..."
-         - Claims: "Which choice provides the strongest evidence for..."
-         - Complete Text: "Which choice most logically completes..."
-         - Cross Text: "How do the two passages differ in their approach to..."
-         - Structure: "The passage is primarily organized by..."
-      3. Provide four answer choices labeled A, B, C, D.
-      4. Indicate the correct answer.
-      5. Provide a detailed explanation that:
-         - Explains why the correct choice is correct
-         - Briefly addresses why each other choice is incorrect
-         - References specific parts of the passage(s)
-
-      Return a VALID JSON object in this EXACT format (no extra keys, no additional text):
+function getPromptForQuestionType(type: QuestionType): string {
+  const prompts: Record<QuestionType, string> = {
+    reading: `Create a SAT-style reading comprehension question. Return it in this JSON format:
       {
-        "question": "Passage: ...\\nQuestion: ...",
-        "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-        "correctAnswer": "X",
-        "explanation": "..."
-      }
-    `,
-
-    writing: `
-      Generate a DSAT-style Writing and Language question at ${difficulty} difficulty level.
-
-      1. Provide a short sentence or brief passage (1–2 sentences) with an underlined or bracketed 
-         portion that needs editing or improvement. 
-         - Focus on typical DSAT Writing topics: grammar, punctuation, word choice, style, 
-           sentence structure, or usage.
-      2. Formulate ONE question that asks how best to revise the underlined or bracketed portion.
-         - Example prompt: "Which choice completes the text so that it conforms to the conventions 
-           of Standard English?"
-      3. Provide four answer choices labeled A, B, C, D (including the original wording if it helps).
-      4. Indicate the correct answer.
-      5. Provide a detailed explanation that:
-         - Explains why the correct choice is best.
-         - Addresses why each of the other options is incorrect or less effective.
-
-      Return a VALID JSON object in this EXACT format (no extra keys, no additional text):
+        "question": "Include a short passage followed by Question: What is the main idea?",
+        "options": ["correct answer", "wrong answer 1", "wrong answer 2", "wrong answer 3"],
+        "correctAnswer": "correct answer",
+        "explanation": "Detailed explanation of why this is the correct answer"
+      }`,
+    writing: `Create a SAT-style writing/grammar question. Return it in this JSON format:
       {
-        "question": "Short text with [underlined portion] + question",
-        "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-        "correctAnswer": "X",
-        "explanation": "..."
-      }
-    `,
-
-    math: `
-      Generate a DSAT-style Math question at ${difficulty} difficulty level.
-
-      1. Provide ONE math problem typical of the DSAT Math section (algebra, geometry, data analysis, 
-          or a word problem).
-      2. Give four answer choices labeled A, B, C, D.
-      3. Indicate the correct answer.
-      4. Offer a step-by-step explanation:
-         - Demonstrate how to solve the problem from start to finish.
-         - Include any relevant formulas or reasoning steps.
-
-      Return a VALID JSON object in this EXACT format (no extra keys, no additional text):
+        "question": "The question about grammar or writing style",
+        "options": ["correct answer", "wrong answer 1", "wrong answer 2", "wrong answer 3"],
+        "correctAnswer": "correct answer",
+        "explanation": "Detailed explanation of why this is the correct answer"
+      }`,
+    math: `Create a SAT-style math question. Return it in this JSON format:
       {
-        "question": "...",
-        "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-        "correctAnswer": "X",
-        "explanation": "..."
-      }
-    `,
+        "question": "The math problem",
+        "options": ["correct answer", "wrong answer 1", "wrong answer 2", "wrong answer 3"],
+        "correctAnswer": "correct answer",
+        "explanation": "Detailed explanation of the solution process"
+      }`,
+    vocabulary: `Create a SAT-style vocabulary question. Return it in this JSON format:
+      {
+        "question": "What is the meaning of [word]?",
+        "options": ["correct definition", "wrong definition 1", "wrong definition 2", "wrong definition 3"],
+        "correctAnswer": "correct definition",
+        "explanation": "Explanation of the word's meaning and etymology"
+      }`,
   };
 
-  // Default to "reading" prompt if the type is unrecognized
-  return prompts[type] || prompts.reading;
+  return prompts[type];
 }

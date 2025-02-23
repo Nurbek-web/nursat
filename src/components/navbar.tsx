@@ -17,7 +17,6 @@ export default function Navbar() {
           {user ? (
             <>
               <Link href="/dashboard">Dashboard</Link>
-              <Link href="/practice">Practice</Link>
             </>
           ) : (
             <>

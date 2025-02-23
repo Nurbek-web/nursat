@@ -38,11 +38,9 @@ export async function POST(request: Request) {
 
       // Handle different possible response structures
       if (typeof parsedData === "object" && parsedData !== null) {
-        // If it's an object with a questions property, use that
         if ("questions" in parsedData) {
           questions = parsedData.questions;
         } else {
-          // Otherwise use the object itself
           questions = parsedData;
         }
       } else {
@@ -60,11 +58,9 @@ export async function POST(request: Request) {
         .filter((q) => q != null)
         .map((q: unknown) => {
           try {
-            // If it's a string, try to parse it
             if (typeof q === "string") {
               return JSON.parse(q);
             }
-            // If it's already an object, return it
             if (typeof q === "object" && q !== null) {
               return q;
             }
@@ -78,13 +74,20 @@ export async function POST(request: Request) {
 
       // Validate each question has the required fields
       questions = questions.filter((q) => {
-        return (
-          q.question &&
+        const isValid =
+          q &&
+          typeof q === "object" &&
+          "question" in q &&
           Array.isArray(q.options) &&
           q.options.length === 4 &&
-          q.correctAnswer &&
-          q.explanation
-        );
+          "correctAnswer" in q &&
+          "explanation" in q;
+
+        if (!isValid) {
+          console.error("Invalid question format:", q);
+        }
+
+        return isValid;
       });
 
       // If we ended up with no questions, return an error
